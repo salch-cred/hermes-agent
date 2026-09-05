@@ -704,3 +704,64 @@ class TestBomToleranceInMemoryFiles:
         raw, read_ok = MemoryStore._read_raw_checked(path)
         assert read_ok is False
         assert raw == ""
+
+
+class TestApplyBatchProtectsUserProfile:
+    """#103419: Background memory consolidation must not silently empty USER.md."""
+
+    def test_apply_batch_rejects_erasing_user_profile(self, store):
+        """Reject batch that would erase entire USER.md profile."""
+        store.add("user", "Initial user preference.")
+        assert store.user_entries == ["Initial user preference."]
+
+        # Attempt to erase the entire user profile via apply_batch
+        bad_batch = [{"action": "remove", "old_text": "Initial user preference."}]
+        result = store.apply_batch("user", bad_batch)
+
+        # Batch should be rejected
+        assert result["success"] is False
+        assert "erase the entire USER.md profile" in result["error"]
+
+        # Profile should remain intact
+        assert store.user_entries == ["Initial user preference."]
+
+    def test_apply_batch_allows_clearing_memory_target(self, store):
+        """apply_batch should still allow clearing memory target (not user)."""
+        store.add("memory", "Some fact.")
+        assert store.memory_entries == ["Some fact."]
+
+        # Clearing memory target should succeed
+        bad_batch = [{"action": "remove", "old_text": "Some fact."}]
+        result = store.apply_batch("memory", bad_batch)
+
+        # Should succeed - memory target can be cleared
+        assert result["success"] is True
+        assert store.memory_entries == []
+
+    def test_apply_batch_allows_partial_user_update(self, store):
+        """Partial updates to user profile should still work."""
+        store.add("user", "Old preference.")
+        assert store.user_entries == ["Old preference."]
+
+        # Partial update - replace, not erase
+        result = store.apply_batch("user", [
+            {"action": "replace", "old_text": "Old preference.", "content": "New preference."}
+        ])
+
+        assert result["success"] is True
+        assert store.user_entries == ["New preference."]
+
+    def test_apply_batch_rejects_erasing_user_profile_via_replace(self, store):
+        """Replacing the only user entry with empty content should be rejected."""
+        store.add("user", "Only preference.")
+        assert store.user_entries == ["Only preference."]
+
+        # Replace with empty content - effectively erasing
+        result = store.apply_batch("user", [
+            {"action": "replace", "old_text": "Only preference.", "content": ""}
+        ])
+
+        # Should be rejected - would leave empty profile
+        assert result["success"] is False
+        assert "erase the entire USER.md profile" in result["error"]
+        assert store.user_entries == ["Only preference."]

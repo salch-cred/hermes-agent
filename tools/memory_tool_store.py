@@ -311,6 +311,44 @@ class MemoryStore:
 
         def _apply(entries, limit):
             working = list(entries)  # only committed if the whole batch validates
+            
+            # Guard: reject background/autonomous consolidation that would erase a previously
+            # non-empty user profile completely. Check this BEFORE per-operation validation
+            # so we catch the case where a replace with empty content would erase the profile.
+            # An autonomous/background consolidation should not be allowed to erase an 
+            # existing USER.md profile without an explicit user-authorized reset (#103419).
+            if target == "user" and len(entries) > 0:
+                # Simulate the batch operations to see if they would result in an empty profile
+                temp_working = list(entries)
+                for op in ops:
+                    act = op.get("action")
+                    content = (op.get("content") or op.get("new_text") or "").strip()
+                    old_text = (op.get("old_text") or "").strip()
+                    if act == "remove":
+                        # Find and remove the entry
+                        idx, _ = _find_unique_match(temp_working, old_text)
+                        if idx is not None:
+                            temp_working.pop(idx)
+                    elif act == "replace":
+                        idx, _ = _find_unique_match(temp_working, old_text)
+                        if idx is not None:
+                            # If content is empty, this would effectively remove the entry
+                            if content:
+                                temp_working[idx] = content
+                            else:
+                                temp_working.pop(idx)
+                    elif act == "add":
+                        if content and content not in temp_working:
+                            temp_working.append(content)
+                
+                # If the simulated operations would leave an empty user profile, reject it
+                if len(temp_working) == 0 and len(entries) > 0:
+                    return self._failure_with_entries(target, (
+                        "Refusing to apply batch: this operation would erase the entire USER.md "
+                        "profile. Autonomous/background consolidations must not silently erase an "
+                        "existing user profile. Use an explicit manual reset if this is intentional."))
+
+            # Now do the actual validation and application
             for i, op in enumerate(ops):
                 act = op.get("action")
                 msg = self._apply_batch_op(working, act, (op.get("content") or op.get("new_text") or "").strip(),
