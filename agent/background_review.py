@@ -867,6 +867,19 @@ def build_cache_parity_fork(
     if not _routed:
         review_agent._cached_system_prompt = agent._cached_system_prompt
         review_agent.session_start = agent.session_start
+        # Preserve the parent's advertised tools[] so the fork can reuse the same
+        # provider cache key (tools[] is part of the cache key for Anthropic/OpenRouter).
+        # We only do this when the parent has a live memory manager and tools,
+        # and when the fork is not routed to a different cache domain.
+        if (
+            getattr(agent, "_memory_manager", None) is not None
+            and getattr(agent, "tools", None) is not None
+        ):
+            review_agent.tools = copy.deepcopy(agent.tools)
+            if review_agent.tools:
+                review_agent.valid_tool_names = {
+                    tool["function"]["name"] for tool in review_agent.tools
+                }
     _detach_fork_compression(review_agent)
     # Compaction bounds a single request; this bounds the WHOLE review (checked in
     # conversation_loop via _review_input_budget_exhausted).
