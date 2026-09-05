@@ -56,3 +56,23 @@ export function createWindowOpenHandler(
     return { action: 'deny' }
   }
 }
+
+/**
+ * Wire the always-deny window-open policy onto an auth-flow window
+ * (OAuth gateway login, portal sign-in, silent portal renewal).
+ *
+ * These windows load REMOTE content we do not initiate — the OAuth redirect
+ * chain passes through third-party IDP pages, and the portal page itself is
+ * fetched over the network — so a `window.open` reaching their webContents
+ * is content-driven, exactly the GHSA-9f4c-93c8-jc8g shape. The label
+ * distinguishes the deny log lines by flow.
+ */
+export function wireAuthWindowOpenPolicy(
+  win: { webContents: { setWindowOpenHandler: (handler: (details: WindowOpenRequestLike) => WindowOpenDecision) => void } },
+  label: string,
+  log?: (line: string) => void
+): void {
+  win.webContents.setWindowOpenHandler(
+    createWindowOpenHandler(origin => log?.(`[window-open] ${label} denied: ${origin}`))
+  )
+}
