@@ -398,6 +398,64 @@ class TestMemoryBatch:
         assert "legit fact" not in store.memory_entries
 
 
+    # =====================================================================
+    # #103419: a batch may not empty a non-empty profile.
+    #
+    # Field report (2026-08-30, v0.20.6): an autonomous background memory
+    # review committed a consolidation batch whose net effect removed every
+    # USER.md entry. The final-budget check can never catch this — an empty
+    # entry list is 0 chars, always under the limit — so the profile was
+    # silently erased and later sessions treated the user as brand new.
+    # The batch guard makes emptying a non-empty list an all-or-nothing
+    # failure, same as every other validation in the batch.
+    # =====================================================================
+
+    def test_batch_emptying_nonempty_profile_is_rejected(self, store):
+        """The reported data-loss vector: remove-everything commits nothing."""
+        store.add("user", "Lives in Berlin")
+        store.add("user", "Prefers concise answers")
+        result = json.loads(memory_tool(
+            target="user",
+            operations=[
+                {"action": "remove", "old_text": "Lives in Berlin"},
+                {"action": "remove", "old_text": "Prefers concise answers"},
+            ],
+            store=store,
+        ))
+        assert result["success"] is False
+        assert "empty" in result["error"].lower()
+        # All-or-nothing: the entries are still there.
+        assert "Lives in Berlin" in store.user_entries
+        assert "Prefers concise answers" in store.user_entries
+
+    def test_batch_remove_all_then_add_replacement_is_allowed(self, store):
+        """The escape hatch: the model may empty the list IF the same batch
+        adds the replacement content (batches are atomic, so the final state
+        is never empty)."""
+        store.add("user", "Old profile entry")
+        result = json.loads(memory_tool(
+            target="user",
+            operations=[
+                {"action": "remove", "old_text": "Old profile entry"},
+                {"action": "add", "content": "Consolidated new profile entry"},
+            ],
+            store=store,
+        ))
+        assert result["success"] is True
+        assert "Consolidated new profile entry" in store.user_entries
+        assert "Old profile entry" not in store.user_entries
+
+    def test_batch_on_already_empty_profile_is_a_noop_success(self, store):
+        """Emptying an already-empty list must not spuriously fail."""
+        result = json.loads(memory_tool(
+            target="user",
+            operations=[{"action": "add", "content": "first entry"}],
+            store=store,
+        ))
+        assert result["success"] is True
+        assert "first entry" in store.user_entries
+
+
 # =========================================================================
 # External drift guard (#26045)
 #

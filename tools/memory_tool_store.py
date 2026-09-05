@@ -317,6 +317,20 @@ class MemoryStore:
                                            (op.get("old_text") or "").strip(), f"Operation {i + 1} ({act or 'unknown'})")
                 if msg:
                     return self._failure_with_entries(target, msg + " No operations were applied (batch is all-or-nothing).")
+            # #103419: an autonomous/background consolidation must not be able to
+            # erase an existing profile completely. A batch whose net effect empties
+            # a previously NON-empty entry list is silent data loss (the agent in a
+            # later session behaves as though the profile were brand new), and the
+            # budget check below can never catch it -- an empty list is 0 chars,
+            # always under the limit. Reset-to-empty belongs to the explicit
+            # `hermes memory reset` surface, not to a consolidation batch. The
+            # emptying-an-already-empty-list case is a no-op and stays allowed.
+            if entries and not working:
+                return self._failure_with_entries(target, (
+                    "This batch would remove every entry and leave the profile empty. "
+                    "That is not something a consolidation may do — keep at least one "
+                    "entry, or add the replacement content in the SAME batch "
+                    "(batches apply atomically). No operations were applied."))
             new_total = len(ENTRY_DELIMITER.join(working))  # budget check against the FINAL state only
             if new_total > limit:
                 return self._failure_with_entries(target, (
