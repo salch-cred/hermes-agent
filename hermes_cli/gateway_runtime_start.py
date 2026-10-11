@@ -37,9 +37,11 @@ def spawn_unmanaged_gateway(profile_home: Path, *, deadline: float, idle_exit: b
     env.update(HERMES_HOME=str(home), HERMES_GATEWAY_DETACHED="1", PYTHONIOENCODING="utf-8")
     # Profile selection is the explicit home, not the invoking client's display
     # name. Launch-only approval/context/config flags ride the launching session's frozen
-    # policy, not the shared daemon or every later session.
+    # policy, not the shared daemon or every later session. HERMES_ACCEPT_HOOKS is
+    # launch-only too: one client must not enable hook consent for all later surfaces.
     env.pop("HERMES_PROFILE", None)
     env.pop("HERMES_YOLO_MODE", None)
+    env.pop("HERMES_ACCEPT_HOOKS", None)
     env.pop("HERMES_IGNORE_RULES", None)
     env.pop("HERMES_SAFE_MODE", None)
     env.pop("HERMES_IGNORE_USER_CONFIG", None)
