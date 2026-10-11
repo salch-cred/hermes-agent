@@ -7,6 +7,38 @@ import sys
 import pytest
 
 
+def test_hardlinked_gateway_lock_is_refused_even_at_0600(tmp_path):
+    """An already-0600 hardlinked gateway.lock must not pass tightening (P2).
+
+    The link-count refusal used to ride the chmod path, so a hardlink that already
+    had mode 0600 bypassed it; the Windows branch checked no link count at all.
+    """
+    from gateway import runtime_ownership
+
+    target = tmp_path / 'target'
+    target.write_text('', encoding='utf-8')
+    if os.name != 'nt':
+        target.chmod(0o600)
+    lock = tmp_path / 'gateway.lock'
+    os.link(target, lock)
+    fd = os.open(lock, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        with pytest.raises(PermissionError, match='unsafe gateway lock'):
+            runtime_ownership.tighten_lock_mode(fd)
+    finally:
+        os.close(fd)
+    # Control: a single-link lock still tightens cleanly.
+    single = tmp_path / 'single.lock'
+    single.write_text('', encoding='utf-8')
+    if os.name != 'nt':
+        single.chmod(0o600)
+    fd = os.open(single, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        runtime_ownership.tighten_lock_mode(fd)
+    finally:
+        os.close(fd)
+
+
 @pytest.mark.platforms("linux")
 def test_losing_start_never_constructs_writable_runner(tmp_path):
     from gateway.status import acquire_gateway_runtime_lock, release_gateway_runtime_lock

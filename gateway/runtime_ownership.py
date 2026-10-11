@@ -29,17 +29,18 @@ def tighten_lock_mode(fd: int) -> None:
     umask (0644 on most hosts), and lock inodes are never replaced, so an upgraded home keeps that
     mode forever and discovery refuses it. Only a regular, single-link inode this user owns is
     chmodded, through the already-open NOFOLLOW descriptor (no path race); anything else is refused.
+    The link count is checked for every mode: an already-0600 hardlink would otherwise bypass the
+    guard entirely.
     """
     info = os.fstat(fd)
     if os.name == 'nt':
-        if not stat.S_ISREG(info.st_mode):
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise PermissionError('unsafe gateway lock owner or type')
         return
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():  # windows-footgun: ok — POSIX branch
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()  # windows-footgun: ok — POSIX branch
+            or info.st_nlink != 1):
         raise PermissionError('unsafe gateway lock owner or type')
     if stat.S_IMODE(info.st_mode) & 0o077:
-        if info.st_nlink != 1:
-            raise PermissionError('unsafe gateway lock link count')
         os.fchmod(fd, 0o600)  # windows-footgun: ok — POSIX branch
 
 
