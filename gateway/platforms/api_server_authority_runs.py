@@ -53,9 +53,19 @@ def run_projection(adapter, run_id):
         pending = list(live.controls.snapshot(row['target_session_id'], row['generation']))
         if any(prompt.get('kind') == 'approval' for prompt in pending):
             status = 'waiting_for_approval'  # the documented run state main's run store reports
-    return {'pending_controls': pending, 'run_id': run_id, 'status': status, 'session_id': row['target_session_id'],
+    projection = {'pending_controls': pending, 'run_id': run_id, 'status': status, 'session_id': row['target_session_id'],
             'admission_id': row['admission_id'], 'execution_generation': row['generation'],
             'output': result.get('final_response', ''), 'usage': saved.get('usage', {}) if saved else {}}
+    # The retained run status and the terminal SSE event both carry the documented
+    # public metadata; polling must agree with them instead of dropping it.
+    retained = getattr(adapter, '_run_statuses', None)
+    metadata = retained.get(run_id) if isinstance(retained, dict) else None
+    if isinstance(metadata, dict):
+        for key in ('object', 'model', 'runtime', 'created_at'):
+            if key in metadata and key not in projection:
+                projection[key] = metadata[key]
+    projection.setdefault('object', 'hermes.run')
+    return projection
 
 
 async def send_clarify(adapter, *, chat_id, **kwargs):

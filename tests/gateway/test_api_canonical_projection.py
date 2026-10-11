@@ -262,6 +262,39 @@ async def test_room_grant_answers_the_clarify_prompt_its_run_raised(api, owner, 
         assert (await denied.json())['error']['code'] == 'room_reauthorization_required'
 
 
+@pytest.mark.asyncio
+async def test_run_projection_carries_documented_run_metadata(api, owner):
+    """Polling agrees with the retained status on object/model/runtime/created_at.
+
+    The canonical projection dropped the documented public metadata even though the
+    retained status and the terminal SSE event both carry it.
+    """
+    from gateway.platforms.api_server_authority_runs import run_projection
+    from gateway.platforms.api_server_runs import _execute_run
+
+    admitted = admit_api_turn(api, session_id='run-meta', request_id='run_meta_1',
+                              user_message='hello', conversation_history=[])
+
+    async def handle(event):
+        from gateway.session_results import execution_result
+        execution_result.get()['result'] = {'final_response': 'done'}
+        return 'done'
+    owner.runner._handle_message = handle
+    launch, _queue = _launch(api, admitted, run_id='run_meta_1')
+    await _execute_run(api, launch, _api_server=_api_server)
+    await asyncio.sleep(0)
+    retained = api._run_statuses['run_meta_1']
+    # The test-env run carries no model binding; seed the retained public metadata
+    # exactly as production runs do, then require polling to agree with it.
+    retained.update({'object': 'hermes.run', 'model': 'fixture-model',
+                     'runtime': {'provider': 'fixture-provider', 'model': 'fixture-model',
+                                 'route_source': 'global'}})
+    projected = run_projection(api, 'run_meta_1')
+    assert projected['object'] == 'hermes.run' == retained['object']
+    for key in ('model', 'runtime', 'created_at'):
+        assert projected[key] == retained[key], key
+
+
 def test_run_status_reports_waiting_for_approval_while_a_prompt_is_pending(api, owner):
     """GET /v1/runs/{id} said `running` while an approval was pending; the documented run state
     (and main's in-memory run store) is `waiting_for_approval`, which UIs key their prompt on."""
