@@ -842,22 +842,45 @@ def _retained_tree_is_live(db_path: str, worktree_path: str) -> bool:
     return row is not None
 
 
-def _worktree_lock_reason(repo_root: str, worktree_path: str, timeout: int):
-    """``(found, reason)`` from ``git worktree list --porcelain -z``; reason is ``None`` when
-    unlocked and ``""`` for a bare lock. Raises when git fails."""
-    listing = _git(["worktree", "list", "--porcelain", "-z"], repo_root, timeout=timeout)
-    if listing.returncode != 0:
-        raise RuntimeError(listing.stderr.strip())
+def _match_lock_record(records, worktree_path):
+    """``(found, reason)`` matching one ``git worktree list`` entry: reason is ``None``
+    when unlocked and ``""`` for a bare lock. *records* is an iterable of field lists."""
     target = Path(worktree_path).resolve()
-    for record in listing.stdout.split("\0\0"):
-        fields = record.strip("\0").split("\0")
-        if not fields[0].startswith("worktree ") or Path(fields[0][len("worktree "):]).resolve() != target:
+    for fields in records:
+        fields = [field for field in fields if field]
+        if not fields or not fields[0].startswith("worktree "):
+            continue
+        if Path(fields[0][len("worktree "):]).resolve() != target:
             continue
         for field in fields[1:]:
-            if field == "locked" or field.startswith("locked "):
+            if field == "locked":
+                return True, ""
+            if field.startswith("locked "):
                 return True, field[len("locked "):]
         return True, None
     return False, None
+
+
+def _worktree_lock_reason(repo_root: str, worktree_path: str, timeout: int):
+    """``(found, reason)`` from ``git worktree list --porcelain``; reason is ``None`` when
+    unlocked and ``""`` for a bare lock. Raises when git fails.
+
+    Prefers the ``-z`` form (exact on hostile paths); git < 2.36 rejects ``-z``
+    (exit 129), so fall back to newline parsing there rather than failing safe
+    toward "live" for every tree.
+    """
+    listing = _git(["worktree", "list", "--porcelain", "-z"], repo_root, timeout=timeout)
+    if listing.returncode == 0:
+        return _match_lock_record(
+            (record.strip("\0").split("\0") for record in listing.stdout.split("\0\0")),
+            worktree_path)
+    fallback = _git(["worktree", "list", "--porcelain"], repo_root, timeout=timeout)
+    if fallback.returncode != 0:
+        raise RuntimeError(fallback.stderr.strip())
+    text = fallback.stdout.replace("\r\n", "\n")
+    return _match_lock_record(
+        (record.split("\n") for record in text.split("\n\n") if record.strip()),
+        worktree_path)
 
 
 def _worktree_lock_is_live(repo_root: str, worktree_path: str, timeout: int = 10):

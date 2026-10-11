@@ -269,6 +269,25 @@ class TestWorktreeLockPredicate:
         # Not a git repo -> git query fails -> must report "live" (never delete)
         assert worktree_ops._worktree_lock_is_live(str(tmp_path), str(tmp_path / "x")) == "live"
 
+    def test_lock_reason_falls_back_without_z_on_old_git(self, git_repo, monkeypatch):
+        # N37: git < 2.36 rejects `worktree list --porcelain -z` (exit 129); the lock
+        # lookup must fall back to newline parsing, not report every tree "live".
+        from types import SimpleNamespace
+
+        def old_git(args, cwd, timeout=10, **kwargs):
+            if args[-1] == "-z":
+                return SimpleNamespace(returncode=129, stdout="",
+                                       stderr="error: unknown option `z'")
+            return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
+                                  timeout=timeout, check=False, **kwargs)
+
+        monkeypatch.setattr(worktree_ops, "_git", old_git)
+        live = self._mk_locked(git_repo, "hermes-oldgit-live", f"hermes pid={os.getpid()}")
+        assert worktree_ops._worktree_lock_is_live(str(git_repo), str(live)) == "live"
+        dead = self._mk_locked(git_repo, "hermes-oldgit-dead", "some other tool")
+        assert worktree_ops._worktree_lock_is_live(str(git_repo), str(dead)) == "dead"
+        assert worktree_ops._worktree_lock_reason(str(git_repo), str(dead), 10) == (True, "some other tool")
+
 
 class TestWidenedPruner:
     """Behavior contracts for the widened pruner (#all-.worktrees coverage,
