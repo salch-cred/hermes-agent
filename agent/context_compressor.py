@@ -1341,7 +1341,7 @@ def _pending_tool_round(messages: list[dict[str, Any]]) -> range:
     after the newest tool result before the next API call, and two can land in one iteration (one when the tool
     batch ends, one before the request), so every contiguous trailing steer row is skipped."""
     end = len(messages)
-    while end and messages[end - 1].get("display_kind") == STEER_DISPLAY_KIND:
+    while end and messages[end - 1].get("role") not in ("assistant", "tool"):
         end -= 1
     start = end
     while start > 0 and messages[start - 1].get("role") == "tool":
@@ -2016,7 +2016,14 @@ def _summarize_tool_result_unguarded(tool_name: str, tool_args: str, tool_conten
     if (refused := _summarize_refused_tool_result(tool_name, args, content)) is not None:
         return refused
     content_len = len(content)
-    line_count = content.count("\n") + 1 if content.strip() else 0
+    _line_source = content
+    try:
+        _parsed = json.loads(content)
+        if isinstance(_parsed, dict) and isinstance(_parsed.get("output"), str):
+            _line_source = _parsed["output"]
+    except (ValueError, TypeError):
+        pass
+    line_count = _line_source.count("\n") + 1 if _line_source.strip() else 0
     summarizer = _TOOL_RESULT_SUMMARIZERS.get(tool_name)
     if summarizer is not None:
         return summarizer(tool_name, args, content, content_len, line_count)
