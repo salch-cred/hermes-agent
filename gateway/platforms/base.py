@@ -4075,7 +4075,10 @@ class BasePlatformAdapter(ABC):
         if should_bypass_active_session(cmd):
             try:
                 # /stop, /new, /reset: cancel + response + drain; other bypasses don't cancel.
-                if cmd and is_interrupt_then_dispatch(cmd):
+                if (cmd and is_interrupt_then_dispatch(cmd)
+                        and self._is_sender_authorized(event.source.user_id, event.source.chat_type,
+                                                      event.source.chat_id, is_bot=event.source.is_bot,
+                                                      thread_id=event.source.thread_id) is not False):
                     self._discard_text_debounce(session_key)
                     await self._dispatch_active_session_command(event, session_key, cmd)
                 else:
