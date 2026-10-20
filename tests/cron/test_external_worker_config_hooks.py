@@ -66,7 +66,7 @@ def test_worker_registers_owning_profile_config_hooks(homes, tmp_path, monkeypat
     )
     monkeypatch.setattr(
         "cron.executions.adopt_claimed_execution",
-        lambda execution_id: {"id": execution_id, "status": "running"},
+        lambda execution_id, **_kwargs: {"id": execution_id, "status": "running"},
     )
     monkeypatch.setattr(scheduler, "run_one_job", lambda *a, **k: True)
 

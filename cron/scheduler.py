@@ -3677,6 +3677,10 @@ def _launch_external_cron_worker(job: dict) -> bool:
                     "job": job,
                     "profile_home": str(_get_hermes_home().resolve()),
                     "multiplex_active": multiplex_active,
+                    # The worker retries a locked adoption inside this window instead of exiting
+                    # after the 5 s busy_timeout (#135487). Stamp it here so the worker stops
+                    # before this gateway stops waiting for the acknowledgement.
+                    "adoption_deadline": time.time() + HANDOFF_ADOPTION_GRACE_SECONDS,
                 },
                 payload_file,
             )
@@ -3852,6 +3856,8 @@ def _run_external_worker_payload(payload_path: Path, ack_path: Path) -> bool:
         job = payload["job"]
         profile_home = Path(payload["profile_home"]).resolve()
         execution_id = str(job["execution_id"])
+        _deadline = payload.get("adoption_deadline")
+        adoption_deadline = float(_deadline) if isinstance(_deadline, (int, float)) else None
     except Exception:
         logger.exception("Cron external worker could not load payload %s", payload_path)
         return False
@@ -3899,7 +3905,7 @@ def _run_external_worker_payload(payload_path: Path, ack_path: Path) -> bool:
         GatewayStartupMixin._register_config_hooks(
             "Cron external worker: config hook registration failed", level=logging.WARNING)
         with use_cron_store(profile_home):
-            if adopt_claimed_execution(execution_id) is None:
+            if adopt_claimed_execution(execution_id, deadline=adoption_deadline) is None:
                 logger.error(
                     "Cron external worker refused execution %s: durable ownership "
                     "could not be established",

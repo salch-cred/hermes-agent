@@ -69,7 +69,7 @@ def test_worker_hydrates_owning_profile_plugin_secret_source(homes, tmp_path, mo
     )
     monkeypatch.setattr(
         "cron.executions.adopt_claimed_execution",
-        lambda execution_id: {"id": execution_id, "status": "running"},
+        lambda execution_id, **_kwargs: {"id": execution_id, "status": "running"},
     )
     scopes = []
 

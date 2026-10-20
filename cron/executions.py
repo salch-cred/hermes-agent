@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 EXECUTIONS_FILE: Optional[Path] = None
 MAX_TERMINAL_EXECUTIONS = 1000
 HANDOFF_ADOPTION_GRACE_SECONDS = 30.0
+# Adoption retries a ``database is locked``/``busy`` transaction inside the handoff window the
+# gateway already waits for, instead of failing after the 5 s ``busy_timeout`` (#135487). The
+# reserve keeps the acknowledgement ahead of the gateway's deadline.
+ADOPT_LOCK_RETRY_INITIAL_SECONDS = 0.05
+ADOPT_LOCK_RETRY_MAX_SECONDS = 1.0
+ADOPT_LOCK_RETRY_RESERVE_SECONDS = 2.0
 # Floor for the live-owner stale-claim bound (#115692); see _live_owner_stale_after_seconds.
 LIVE_OWNER_STALE_CLAIM_FLOOR_SECONDS = 7200.0
 _TERMINAL_STATES = ("completed", "failed", "unknown")
@@ -264,13 +270,13 @@ def mark_execution_handoff_pending(execution_id: str) -> Optional[dict[str, Any]
     return record
 
 
-def adopt_claimed_execution(execution_id: str) -> Optional[dict[str, Any]]:
-    """Atomically transfer and start an attempt in its worker process.
+def _is_lock_contention(exc: sqlite3.OperationalError) -> bool:
+    """True when SQLite refused a write only because another connection held the lock."""
+    message = str(exc).lower()
+    return "database is locked" in message or "database is busy" in message
 
-    The dispatching gateway creates the row before spawning a restart-safe
-    worker.  Adoption is the single ``claimed`` → ``running`` gate: only the
-    winner may acknowledge ownership or run side effects.
-    """
+
+def _adopt_claimed_execution_once(execution_id: str) -> Optional[dict[str, Any]]:
     pid = os.getpid()
     process_started_at = _process_start_time(pid)
     now = _hermes_now().isoformat()
@@ -285,7 +291,40 @@ def adopt_claimed_execution(execution_id: str) -> Optional[dict[str, Any]]:
         )
         if cur.rowcount != 1:
             return None
-        record = _fetch(conn, execution_id)
+        return _fetch(conn, execution_id)
+
+
+def adopt_claimed_execution(
+    execution_id: str, *, deadline: Optional[float] = None
+) -> Optional[dict[str, Any]]:
+    """Atomically transfer and start an attempt in its worker process.
+
+    The dispatching gateway creates the row before spawning a restart-safe
+    worker.  Adoption is the single ``claimed`` → ``running`` gate: only the
+    winner may acknowledge ownership or run side effects.
+
+    A write that SQLite refuses because another connection holds the ledger
+    lock is retried until ``deadline`` (epoch seconds; defaults to the handoff
+    grace window) so a stalled fsync no longer loses the occurrence (#135487).
+    A CAS refusal is final: ``rowcount == 0`` returns ``None`` without retrying.
+    """
+    if deadline is None:
+        deadline = time.time() + HANDOFF_ADOPTION_GRACE_SECONDS - ADOPT_LOCK_RETRY_RESERVE_SECONDS
+    delay = ADOPT_LOCK_RETRY_INITIAL_SECONDS
+    while True:
+        try:
+            record = _adopt_claimed_execution_once(execution_id)
+            break
+        except sqlite3.OperationalError as exc:
+            if not _is_lock_contention(exc):
+                raise
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise
+            time.sleep(min(delay, remaining))
+            delay = min(delay * 2, ADOPT_LOCK_RETRY_MAX_SECONDS)
+    if record is None:
+        return None
     _emit_execution_state(record)
     return record
 

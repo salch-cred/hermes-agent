@@ -151,7 +151,7 @@ def test_external_worker_adopts_execution_and_runs_payload_once(
 
     observed_homes = []
     adopted = Mock(
-        side_effect=lambda execution_id: (
+        side_effect=lambda execution_id, **_kwargs: (
             observed_homes.append(get_hermes_home().resolve())
             or {"id": execution_id, "status": "running"}
         )
@@ -166,7 +166,7 @@ def test_external_worker_adopts_execution_and_runs_payload_once(
 
     assert scheduler._run_external_worker_payload(payload, ack) is True
 
-    adopted.assert_called_once_with("exec-1")
+    adopted.assert_called_once_with("exec-1", deadline=None)
     run.assert_called_once()
     assert run.call_args.args[0]["id"] == "job-1"
     expected_home = (tmp_path / "profile").resolve()
@@ -195,7 +195,7 @@ def test_external_worker_ack_is_never_observable_half_written(tmp_path, monkeypa
     )
     monkeypatch.setattr(
         "cron.executions.adopt_claimed_execution",
-        lambda execution_id: {"id": execution_id, "status": "running"})
+        lambda execution_id, **_kwargs: {"id": execution_id, "status": "running"})
     monkeypatch.setattr(scheduler, "run_one_job", lambda *_a, **_k: True)
 
     real_dump = json.dump
@@ -229,7 +229,7 @@ def test_external_worker_refuses_to_run_without_durable_ownership(
         }),
         encoding="utf-8",
     )
-    monkeypatch.setattr("cron.executions.adopt_claimed_execution", lambda _id: None)
+    monkeypatch.setattr("cron.executions.adopt_claimed_execution", lambda _id, **_kwargs: None)
     run = Mock()
     monkeypatch.setattr(scheduler, "run_one_job", run)
 
