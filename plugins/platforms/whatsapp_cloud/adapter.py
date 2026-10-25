@@ -238,16 +238,40 @@ class WhatsAppCloudAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         """Cloud API has no self-chat concept (a Baileys-only setting) — no default prefix."""
         return self._reply_prefix.replace("\\n", "\n") if self._reply_prefix is not None else ""
 
+    # Business-scoped user ids (BSUIDs) look like ``CC.<alphanumeric>`` (e.g. ``DE.1A2B3C4D5E``).
+    # They must be compared byte-for-byte (case-sensitive) and never collapsed onto a phone
+    # number's digit projection, otherwise two unrelated BSUIDs can admit each other.
+    _BSUID_RE = re.compile(r"^[A-Z]{2}\.[A-Za-z0-9]{1,128}$")
+    _PHONE_RE = re.compile(r"^[1-9][0-9]{5,14}$")
+
+    @staticmethod
+    def _normalize_allow_id(entry: Any) -> str:
+        """Normalize one allowlist entry.
+
+        Phone numbers lose ``+``, spaces and ``@...`` JID suffixes and keep their digits;
+        a valid E.164-ish projection (6-15 digits, no leading zero) is returned. Anything
+        shaped like a BSUID (``CC.<alphanumeric>``) is kept verbatim and case-sensitive.
+        Values that are neither (wildcards, ``*``, unknown tokens) are preserved unchanged so
+        they keep flowing through the shared WhatsApp matcher.
+        """
+        base = str(entry or "").strip().split("@", 1)[0].strip()
+        if WhatsAppCloudAdapter._BSUID_RE.match(base):
+            return base
+        digits = re.sub(r"\D", "", base)
+        if WhatsAppCloudAdapter._PHONE_RE.match(digits):
+            return digits
+        return base
+
     @staticmethod
     def _normalize_allow_ids(ids: set[str]) -> set[str]:
-        """Normalize allowlist entries to bare wa_id (digits): strip ``@...`` JID suffixes and non-digits."""
-        return {re.sub(r"\D", "", entry.split("@", 1)[0]) or entry for entry in ids}
+        """Normalize allowlist entries: phone numbers to bare digits, BSUIDs verbatim."""
+        return {WhatsAppCloudAdapter._normalize_allow_id(entry) for entry in (ids or ())}
 
     def _entry_matches(self, entries, target: str) -> bool:
-        """Bare-wa_id membership first (Cloud senders are digits), then the shared WhatsApp matcher
-        so ``*`` and phone/LID aliases keep working for DM intake and groups as they always did."""
+        """Bare-id membership first (phone digits or verbatim BSUID), then the shared WhatsApp
+        matcher so ``*`` and phone/LID aliases keep working for DM intake and groups."""
         entries = set(entries or ())
-        bare = re.sub(r"\D", "", str(target).split("@", 1)[0]) or target
+        bare = self._normalize_allow_id(target)
         return bare in self._normalize_allow_ids(entries) or super()._entry_matches(entries, target)
 
     def _webhook_identity_matches(self, entry_id: Any, metadata: Any) -> bool:
