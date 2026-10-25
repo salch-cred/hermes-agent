@@ -366,3 +366,35 @@ def self_repo_block(
         return None
     logger.warning("Blocked self-repo git mutation (command: %s)", _safe_command_preview(command))
     return _blocked_json(msg, "blocked")
+
+
+def protected_instruction_block(
+    *,
+    command: str,
+    cwd: str,
+    workdir: Optional[str],
+    session_key: str,
+    env_type: str,
+    task_id: str,
+) -> Optional[str]:
+    """Guard the shell vector past the ``write_file``/``patch`` instruction-file gate.
+
+    Without it one line (``: > AGENTS.md``, ``sed -i … SOUL.md``, ``cp other.md
+    AGENTS.md``) rewrote prompt instructions with no approval at all (#143266).
+    Local backend only: the protected path is resolved on this filesystem, so a
+    remote backend would compare against the wrong tree.
+
+    Detection is conservative (protected basename AND a write marker) and the
+    shell wording is best-effort -- the approval prompt, not the parse, decides.
+    """
+    if env_type != "local":
+        return None
+    from tools.file_tools_write_guards import protected_instruction_shell_block
+    from tools.terminal_tool import _resolve_command_cwd
+
+    targets_cwd = _resolve_command_cwd(workdir=workdir, default_cwd=cwd, session_key=session_key)
+    blocked = protected_instruction_shell_block(command, cwd=targets_cwd, task_id=task_id)
+    if not blocked:
+        return None
+    logger.warning("Blocked protected instruction write (command: %s)", _safe_command_preview(command))
+    return _blocked_json(blocked, "blocked")

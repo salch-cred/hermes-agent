@@ -12,6 +12,7 @@ whole-file overwrite of content this task never saw or that changed since.
 
 import fnmatch
 import os
+import re
 from pathlib import Path
 
 from agent.file_safety import get_nt_namespace_error
@@ -354,6 +355,64 @@ def _check_protected_instruction_write(paths: list[str], task_id: str = "default
     if not reasons:
         return None
     return _request_protected_instruction_approval(reasons, task_id)
+
+
+# Shell / code spellings that WRITE. Read-only words (cat, grep, ls) stay out so a
+# protected name mentioned in a listing does not prompt. Deliberately conservative:
+# an over-block costs one approval, an under-block rewrites agent instructions unseen.
+_WRITE_MARKER_RE = re.compile(
+    r"""(?:^|[\s;&|(`])(?:>{1,2}|(?:tee|cp|mv|install|ln|truncate|dd|rsync)\b)"""
+    r"""|:>|\bsed\s+-[a-zA-Z]*i\b"""
+    r"""|write_text|write_bytes|\.write\(|shutil\.(?:copy\w*|move)|os\.replace"""
+    r"""|add-content|set-content|out-file|copy-item|move-item""",
+    re.IGNORECASE)
+
+_PATH_TOKEN_RE = re.compile(r"""[^\s"'`()<>|;&,\[\]]+""")
+
+
+def protected_instruction_write_targets(text: str, *, cwd: str | None = None) -> list[str]:
+    """Protected instruction paths that a shell command or code cell writes to.
+
+    The ``write_file``/``patch`` gate below is the only place these files were
+    gated, so one shell line (``: > AGENTS.md``, ``sed -i … SOUL.md``,
+    ``cp notes.md AGENTS.md``) or one ``execute_code`` cell rewrote them with no
+    prompt at all (#143266). Matching needs BOTH a protected basename and a write
+    marker, because a bare ``cat AGENTS.md`` must stay silent.
+
+    Returns the matched paths (deduped, resolved against *cwd* when relative) so
+    the caller can hand them to :func:`_check_protected_instruction_write`; the
+    realpath/symlink and ``~/.hermes`` rules live there.
+    """
+    enabled, extra = _protected_instruction_config()
+    if not enabled or not text or not _WRITE_MARKER_RE.search(text):
+        return []
+    patterns = [p.lower() for p in extra]
+    targets: list[str] = []
+    for token in _PATH_TOKEN_RE.findall(text):
+        token = token.rstrip("=:,")
+        base = os.path.basename(token.replace("\\", "/")).lower()
+        if not base:
+            continue
+        if base not in _PROTECTED_INSTRUCTION_BASENAMES and not any(
+                fnmatch.fnmatch(base, pattern) for pattern in patterns):
+            continue
+        if cwd and not os.path.isabs(token):
+            token = os.path.join(cwd, token)
+        targets.append(token)
+    return list(dict.fromkeys(targets))
+
+
+def protected_instruction_shell_block(text: str, *, cwd: str | None = None,
+                                      task_id: str = "default") -> str | None:
+    """Blocked-message (or ``None``) for a shell command / code cell writing an
+    instruction file. Same one-operation approval as the file-tool sites."""
+    try:
+        targets = protected_instruction_write_targets(text, cwd=cwd)
+        if not targets:
+            return None
+        return _check_protected_instruction_write(targets, task_id)
+    except Exception:  # health: allow BLE001 -- a guard that raises must not break the command
+        return None
 
 
 def _check_approval_required_write(paths: list[str], task_id: str = "default") -> str | None:

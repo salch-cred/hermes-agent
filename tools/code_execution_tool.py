@@ -766,6 +766,19 @@ def execute_code(
     from tools.terminal_tool import _get_env_config, _docker_has_host_access
     _env_config = _get_env_config()
     env_type = _env_config["env_type"]
+    # Same reason as the lifecycle guard above: a cell that does
+    # ``Path("AGENTS.md").write_text(...)`` never touches write_file/patch, so the
+    # protected-instruction-file gate needs its own call site here (#143266).
+    # Local only -- the path is resolved on this filesystem; relative paths resolve
+    # against the task cwd inside the gate.
+    if env_type == "local":
+        try:
+            from tools.file_tools_write_guards import protected_instruction_shell_block
+            _instruction_block = protected_instruction_shell_block(code, task_id=task_id or "default")
+        except Exception:  # health: allow BLE001 -- a guard that raises must not break the cell
+            _instruction_block = None
+        if _instruction_block:
+            return _error_result(_instruction_block)
     # Arbitrary Python never passes through terminal()/DANGEROUS_PATTERNS, so guard the whole
     # script before either dispatch path spawns it — in this (tool-executor) thread, which holds
     # the session context. A Docker sandbox with host bind mounts gets no container fast-path.
