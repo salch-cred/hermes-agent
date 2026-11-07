@@ -1,0 +1,22 @@
+name: visual-gate
+repo: https://github.com/salch-cred/visual-gate
+sha: f089f8a1963fb96a65fdec2f91ae21b651707d01
+description: >-
+  The UI gate for agent-made web work. Screenshots a live page through a real
+  Chrome, diffs it against a stored baseline, and audits it for WCAG 2.2 AA in
+  the same render pass. It catches the breakage an agent introduces when it
+  edits CSS or markup, which no test suite sees: a unit test can't tell that a
+  button moved off-screen, a diff library can't say whether two fonts actually
+  look the same, and a screenshot is just a picture.
+
+maintainer: salch-cred (sal)
+tier: community
+category: tools
+docs_url: https://github.com/salch-cred/visual-gate
+version: "1.0.0"
+
+capabilities:
+  provides_tools: [vg_capture, vg_diff, vg_a11y, vg_gate, vg_baselines, vg_doctor]
+  provides_hooks: []
+  provides_middleware: []
+  requires_env: []
