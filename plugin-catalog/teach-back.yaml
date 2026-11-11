@@ -1,7 +1,7 @@
 name: teach-back
 title: Teach-Back
 repo: https://github.com/salch-cred/teach-back
-sha: ef4c6510944cc374621d8f86cf238eab04ca5d55
+sha: 4be1651bc374f65df9071b0948edbf1f4672094b
 description: >-
   Make sure you understand the code your agent writes. Teach-Back records every
   file the agent writes or patches, and /teachback quizzes you on it: short
@@ -15,7 +15,7 @@ tier: community
 category: tools
 requires_hermes: ">=0.23.0"
 docs_url: https://github.com/salch-cred/teach-back
-version: "0.1.0"
+version: "0.1.1"
 
 capabilities:
   provides_tools: []
