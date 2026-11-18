@@ -565,11 +565,24 @@ def _catalog_key_matches(key: str, model_lower: str) -> bool:
     return key in model_lower or _normalize_model_version(key) in _normalize_model_version(model_lower)
 
 
+# A ``-next`` snapshot is a separate route whose window is not published in the public catalogs, so it
+# must not inherit its family's entry: ``qwen3.8-flash-next`` serves 512K while ``qwen3.8-flash`` is 1M
+# (#157480). An unverified snapshot falls through to the live probe / fallback instead of a wrong default.
+_UNVERIFIED_SNAPSHOT_SUFFIX = "-next"
+
+
+def _is_unverified_snapshot(model_lower: str, key: str) -> bool:
+    """True when *model_lower* is a ``-next`` snapshot of *key* rather than the keyed route itself."""
+    slug = model_lower.rsplit("/", 1)[-1]
+    return slug.endswith(_UNVERIFIED_SNAPSHOT_SUFFIX) and slug != key and slug.startswith(key)
+
+
 def _longest_key_match(table: dict[str, int], model_lower: str) -> Optional[tuple[str, int]]:
     """First ``(key, value)`` whose key is a substring of ``model_lower``, longest key first so
-    specific entries (``gpt-5.4-mini``) beat their family catch-all (``gpt-5``); ties keep table order."""
+    specific entries (``gpt-5.4-mini``) beat their family catch-all (``gpt-5``); ties keep table order.
+    A ``-next`` snapshot never inherits a shorter family key (#157480)."""
     for key, value in sorted(table.items(), key=lambda x: len(x[0]), reverse=True):
-        if _catalog_key_matches(key, model_lower):
+        if _catalog_key_matches(key, model_lower) and not _is_unverified_snapshot(model_lower, key):
             return key, value
     return None
 
