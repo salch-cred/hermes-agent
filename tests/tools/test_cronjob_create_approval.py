@@ -80,3 +80,32 @@ def test_create_with_nobody_to_answer_never_asks(cron_store, monkeypatch):
     terminal_tool.set_approval_callback(lambda *a, **k: pytest.fail("asked with nobody present"))
     assert json.loads(registry.dispatch("cronjob_manage", dict(_CREATE)))["success"] is True
     assert len(cron_store.load_jobs()) == 1
+
+
+def _late_answer(monkeypatch, minutes):
+    """The user answers ``minutes`` after the card was drawn (still inside the 300s gate)."""
+    asked = []
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+
+    def callback(command, description, *, kind="command", **_):
+        asked.append((kind, description))
+        from datetime import timedelta
+        from cron import jobs
+        real_now = jobs._hermes_now
+        monkeypatch.setattr(jobs, "_hermes_now", lambda: real_now() + timedelta(minutes=minutes))
+        return "once"
+
+    terminal_tool.set_approval_callback(callback)
+    return asked
+
+
+def test_late_one_shot_answer_does_not_create_after_approval(cron_store, monkeypatch):
+    """#158289: approval must not be followed by a creation error for a time that passed while waiting."""
+    asked = _late_answer(monkeypatch, 3)
+    result = json.loads(registry.dispatch("cronjob_manage", {**_CREATE, "schedule": "in 1m", "repeat": None}))
+    assert result.get("success") is False
+    assert "passed" in (result.get("error") or "").lower()
+    assert len(cron_store.load_jobs()) == 0
+    assert len(asked) == 1 and asked[0][0] == "schedule"
+
+

@@ -718,6 +718,22 @@ def _action_create(a: dict[str, Any]) -> str:
         a["first_run_at"] = _first_run_at(a["schedule"], a["timezone"])
         if (refusal := a["approve"](a)) is not None:
             return refusal
+        # A one-shot can pass its instant while the card waits for an answer: the gate allows up to
+        # approvals.timeout (300s default), longer than the 120s one-shot grace. Detect that here,
+        # before create, so the user who just approved is not handed a raw scheduler rejection.
+        # Recurring jobs keep their cadence: create_job re-anchors a stale pin on the next slot.
+        first = a.get("first_run_at")
+        if first:
+            from cron.jobs import _hermes_now, _parse_aware
+            if _parse_aware(first) <= _hermes_now():
+                try:
+                    parsed = parse_schedule(str(a["schedule"]))
+                except ValueError:
+                    parsed = {}
+                if parsed.get("kind") == "once" and compute_next_run(parsed, timezone=a["timezone"]) is None:
+                    return tool_error(
+                        "The scheduled time passed while waiting for approval; nothing was scheduled. "
+                        "Ask again with a future time.", success=False)
 
     from cron.scheduler import CronSchedulerRegistrationError, create_job_with_scheduler_registration
     try:
