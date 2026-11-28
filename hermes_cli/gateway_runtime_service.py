@@ -72,10 +72,29 @@ class ExistingService:
     running: bool = False
 
 
+_WINDOWS_SYSTEM32_EXES = frozenset({"schtasks.exe", "whoami.exe"})
+
+
+def _windows_system32_env() -> dict[str, str] | None:
+    """Prepend SystemRoot\\System32 to PATH so bundled Git/MSYS2 tools cannot shadow whoami.exe/schtasks.exe."""
+    system_root = os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows"
+    sys32 = os.path.join(system_root, "System32")
+    if not os.path.isdir(sys32):
+        return None
+    env = dict(os.environ)
+    env["PATH"] = sys32 + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def _run(argv: list[str] | tuple[str, ...], deadline: float, *, encoding: str | None = "utf-8"):
+    kwargs: dict = {}
+    if sys.platform == "win32" and argv and argv[0] in _WINDOWS_SYSTEM32_EXES:
+        env = _windows_system32_env()
+        if env is not None:
+            kwargs["env"] = env
     return subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True,
                           text=encoding is not None, encoding=encoding, errors="strict" if encoding else None,
-                          creationflags=windows_hide_flags(), timeout=remaining(deadline), check=False)
+                          creationflags=windows_hide_flags(), timeout=remaining(deadline), check=False, **kwargs)
 
 
 def _verify_binding(verify, *args, **kwargs):
